@@ -56,7 +56,7 @@ function detect_distribution()
 
 function base_build_setup_debian()
 {
-	PACKAGE_REQS="build-essential libtool g++ gcc texinfo curl wget automake autoconf python python-dev git subversion unzip virtualenvwrapper lsb-release"
+	PACKAGE_REQS="build-essential libtool g++ gcc texinfo curl wget automake autoconf python3-dev git subversion unzip virtualenvwrapper lsb-release pipx"
 	PACKAGE_COUNT=$(echo $PACKAGE_REQS | tr ' ' '\n' | wc -l)
 	sudo apt-get update
 	if [ $(dpkg -l $PACKAGE_REQS | grep "^ii" | wc -l) -ne $PACKAGE_COUNT ]
@@ -83,7 +83,7 @@ function base_build_setup_debian()
 
 function base_build_setup_arch()
 {
-	PACKAGE_REQS="curl wget python2 python3 git subversion unzip python-virtualenvwrapper"
+	PACKAGE_REQS="curl wget python3 git subversion unzip python-virtualenvwrapper"
 	if [ "$ALLOW_SUDO" -eq 1 ]; then
 		sudo pacman -Syu --noconfirm --needed $PACKAGE_REQS
 		sudo pacman -Syu --noconfirm --needed base-devel || true
@@ -175,16 +175,6 @@ set -x PATH $PWD/bin \$PATH
 EOF
 		fi
 	fi
-
-	if [[ ! -e "$PWD/bin/ctf-tools-pip3" ]]; then
-		ln -s "$PWD/bin/ctf-tools-pip" "$PWD/bin/ctf-tools-pip3"
-	fi
-
-	# create the py2 virtualenv
-	"$PWD/bin/ctf-tools-pip" freeze 2>&1 >/dev/null
-
-	# create the py3 virtualenv
-	"$PWD/bin/ctf-tools-pip3" freeze 2>&1 >/dev/null
 }
 
 
@@ -341,16 +331,34 @@ case $ACTION in
 		;;
 	bin)
 		verify_tool_sanity
-		cd bin
-		if [ -d ../$TOOL/bin ]; then
+		if [ ! -d $TOOL/bin ] && [ -d $TOOL/gems/bin ]; then
+			tool_log "making wrappers for rubygems apps"
+
+			mkdir -p $TOOL/bin
+			for BIN in $PWD/$TOOL/gems/bin/*
+			do
+				cat <<END >$TOOL/bin/$(basename $BIN)
+#!/bin/bash
+export GEM_PATH=$PWD/$TOOL/gems
+export GEM_HOME=$PWD/$TOOL/gems
+$BIN "\$@"
+END
+			done
+
+			chmod 755 $TOOL/bin/*
+		fi
+
+		if [ -d $TOOL/bin ]; then
+			cd bin
 			ln -sf ../$TOOL/bin/* .
+			cd ..
 			tool_log "bin symlinks updated"
 		fi
-		cd ..
 		;;
 	install)
 		verify_tool_sanity
 		cd $TOOL
+
 		if [ "$FORCE" -eq 0 ] && is_tool_installed "."
 		then
 			tool_log "appears to already be installed. Uninstall first?"
@@ -402,6 +410,14 @@ case $ACTION in
 
 		# execute install script
 		set +e
+
+		export PIPX_HOME=$PWD/pipx
+		export PIPX_MAN_DIR=$PWD/pipx
+		export PIPX_BIN_DIR=$PWD/bin
+
+		export GEM_HOME=$PWD/gems
+		export GEM_PATH=$PWD/gems
+
 		if [ "$VERBOSE_OUTPUT" -eq 1 ]; then
 			DISTRI=$DISTRI PATH=$CTF_TOOLS_ROOT/bin/:$PATH nice -n$NICE_LEVEL ./install 2>&1 | tee -a install.log
 		else
